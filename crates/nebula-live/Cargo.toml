@@ -1,0 +1,20 @@
+[package]
+name = "nebula-live"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+serde.workspace = true
+tracing.workspace = true
+nebula-core = { path = "../nebula-core" }
+serde_json = "1"
+base64 = "0.23.1"
+futures-util = "0.3.34"
+tokio-tungstenite = { version = "0.30.0", features = ["rustls-tls-native-roots"] }
+rustls = { version = "0.23.44", default-features = false, features = ["ring", "std", "tls12"] }
+tokio = { version = "1.53.1", features = ["rt", "sync", "time", "macros", "rt-multi-thread", "io-util"] }
+
+[dev-dependencies]
+tokio = { version = "1.53.1", features = ["rt", "macros", "rt-multi-thread", "io-util"] }

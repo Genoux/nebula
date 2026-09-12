@@ -1,0 +1,28 @@
+/target
+# Anything that could hold a key, a recording, or a transcript. Broad on
+# purpose: the cost of an ignored file is that it needs `git add -f`, and the
+# cost of a missed one is a rotated credential.
+*.env
+nebula.env
+config.toml
+*.pem
+*.key
+credentials*
+/secrets*
+*.log
+*.wav
+*.flac
+*.opus
+recordings/
+transcripts/
+# Trained or downloaded wake-word models.
+*.ppn
+*.onnx
+*.tflite
+models/
+
+.work/
+*.bin
+
+# Local agent tooling cache.
+.atl/

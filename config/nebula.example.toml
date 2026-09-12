@@ -1,0 +1,41 @@
+# Copy to ~/.config/nebula/config.toml. Every field below is the built-in
+# default except session.model, which has none - see the note there.
+
+[wake_word]
+# "nebula" or "hey nebula".
+phrase = "nebula"
+# 0.0..=1.0. Higher is stricter; lower detects more readily and can misfire.
+sensitivity = 0.55
+# Ignore further detections for this long after one, so a single utterance
+# cannot open two sessions.
+cooldown_seconds = 3
+
+[audio]
+# A PipeWire node name, or "default" to follow WirePlumber.
+# List candidates with: pactl list short sources / sinks
+input_device = "default"
+output_device = "default"
+# Frames per audio callback, and therefore how much sound is already inside the
+# device when a barge-in clears the queue. Measured on PipeWire 1.6: 1024 (the
+# system default) is a 40ms period, 240 is 10ms, 120 is 5ms. Lower is more
+# responsive and more likely to glitch under load.
+buffer_frames = 240
+
+[session]
+model = "gpt-live-1"
+voice = "marin"
+backend_model = "gpt-5.6-luna"
+idle_timeout_seconds = 45
+
+[privacy]
+store_audio = false
+store_transcripts = false
+
+[ui]
+enabled = true
+position = "bottom-center"
+hide_after_seconds = 8
+
+[logging]
+# error | warn | info | debug | trace. RUST_LOG overrides this when set.
+level = "info"

@@ -1,0 +1,21 @@
+[package]
+name = "nebula-ui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "nebula-ui"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+tracing.workspace = true
+nebula-core = { path = "../nebula-core" }
+clap = { version = "4.6.6", features = ["derive"] }
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+serde_json = "1"
+libc = "0.2"
+fontdue = "0.9.4"
+wayland-client = "0.31.15"
+wayland-protocols-wlr = { version = "0.3.12", features = ["client"] }

@@ -1,0 +1,24 @@
+[Unit]
+Description=Nebula voice assistant
+After=graphical-session.target pipewire.service wireplumber.service
+Wants=pipewire.service wireplumber.service
+StartLimitIntervalSec=120
+StartLimitBurst=4
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/nebula
+EnvironmentFile=-%h/.config/nebula/nebula.env
+Environment=XDG_CONFIG_HOME=%h/.config
+Restart=on-failure
+RestartSec=10
+RestartPreventExitStatus=78
+TimeoutStopSec=20
+UMask=0077
+NoNewPrivileges=true
+LimitCORE=0
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target
