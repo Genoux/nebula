@@ -16,6 +16,7 @@ pub struct Config {
     pub privacy: Privacy,
     pub ui: Ui,
     pub logging: Logging,
+    pub tools: Tools,
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq)]
@@ -72,6 +73,44 @@ pub struct Ui {
 #[serde(default, deny_unknown_fields)]
 pub struct Logging {
     pub level: String,
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+#[serde(default, deny_unknown_fields)]
+pub struct Tools {
+    pub enabled: bool,
+    pub roots: Vec<std::path::PathBuf>,
+    pub servers: Vec<ToolServer>,
+    pub integrations: Vec<Integration>,
+    pub timeout_seconds: u64,
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct ToolServer {
+    pub name: String,
+    pub ssh_host: String,
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct Integration {
+    pub name: String,
+    pub program: std::path::PathBuf,
+    #[serde(default)]
+    pub args: Vec<String>,
+}
+
+impl Default for Tools {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            roots: Vec::new(),
+            servers: Vec::new(),
+            integrations: Vec::new(),
+            timeout_seconds: 60,
+        }
+    }
 }
 
 impl Default for WakeWord {
@@ -211,6 +250,39 @@ impl Config {
         if self.session.idle_timeout_seconds == 0 {
             found
                 .push("session.idle_timeout_seconds is 0 - the session would end instantly".into());
+        }
+        if !(1..=300).contains(&self.tools.timeout_seconds) {
+            found.push("tools.timeout_seconds must be between 1 and 300".into());
+        }
+        if self.tools.roots.iter().any(|path| !path.is_absolute()) {
+            found.push("tools.roots must contain absolute paths".into());
+        }
+        let valid_name = |name: &str| {
+            !name.is_empty()
+                && name
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b"-_.".contains(&b))
+        };
+        let mut names = std::collections::HashSet::new();
+        for server in &self.tools.servers {
+            if !valid_name(&server.name)
+                || !valid_name(&server.ssh_host)
+                || server.ssh_host.starts_with('-')
+                || !names.insert(&server.name)
+            {
+                found.push("tools.servers require unique names and plain SSH host aliases".into());
+            }
+        }
+        names.clear();
+        for integration in &self.tools.integrations {
+            if !valid_name(&integration.name)
+                || !integration.program.is_absolute()
+                || !names.insert(&integration.name)
+            {
+                found.push(
+                    "tools.integrations require unique names and absolute executable paths".into(),
+                );
+            }
         }
         found
     }

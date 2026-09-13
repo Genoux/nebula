@@ -45,15 +45,23 @@ fn startup(error: anyhow::Error) -> anyhow::Error {
     anyhow::Error::new(StartupError(format!("{error:#}")))
 }
 
-pub fn run(config: Config, key_from_service: Option<Secret>) -> Result<()> {
+pub fn run(
+    config: Config,
+    key_from_service: Option<Secret>,
+    config_path: std::path::PathBuf,
+) -> Result<()> {
     tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
         .context("could not start the async runtime")?
-        .block_on(run_async(config, key_from_service))
+        .block_on(run_async(config, key_from_service, config_path))
 }
 
-async fn run_async(config: Config, key_from_service: Option<Secret>) -> Result<()> {
+async fn run_async(
+    config: Config,
+    key_from_service: Option<Secret>,
+    config_path: std::path::PathBuf,
+) -> Result<()> {
     let problems = config.problems();
     if !problems.is_empty() {
         return Err(startup(anyhow!(
@@ -77,6 +85,9 @@ async fn run_async(config: Config, key_from_service: Option<Secret>) -> Result<(
     let _instance = ipc::Instance::acquire(&paths::socket_path()?).map_err(startup)?;
     start_ipc(&status, &muted, command_tx)?;
     watch_for_ctrl_c(Arc::clone(&shutdown));
+    if config.ui.enabled {
+        crate::hud::start(config_path);
+    }
 
     let mut state = State::Standby;
     let mut backoff = Backoff::default();

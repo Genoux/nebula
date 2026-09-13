@@ -4,6 +4,7 @@
 //! daemon keeps listening and talking whether or not this is running.
 
 mod hud;
+mod instance;
 mod link;
 mod look;
 mod notify;
@@ -48,6 +49,10 @@ fn main() -> Result<()> {
         tracing::info!("ui.enabled is false - nothing to show");
         return Ok(());
     }
+
+    let Some(_instance) = instance::acquire(&socket)? else {
+        return Ok(());
+    };
 
     let (tx, statuses) = mpsc::channel();
     let link = link::Link::spawn(socket, tx);

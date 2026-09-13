@@ -130,7 +130,7 @@ async fn client(
 
 fn visible_status(status: &UiStatus, muted: &AtomicBool) -> UiStatus {
     if muted.load(Ordering::Relaxed) {
-        UiStatus::Muted
+        UiStatus::Muted.with_activity(status.activity())
     } else {
         status.clone()
     }

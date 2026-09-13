@@ -22,10 +22,24 @@ a shared PCM16 mono 24 kHz audio format, voice, conversation instructions,
 `store = false`, and a managed Responses delegation configuration.
 
 GPT-Live handles listening, speaking, acknowledgments and interruptions. The
-backend model defaults to `gpt-5.6-luna` and supplies reasoning, with an empty tool
-list and `tool_choice = none`. There are no local execution or desktop tools.
-The live prompt describes conversation style and when to delegate; the backend
-prompt describes reasoning and its lack of computer or web access.
+backend model defaults to `gpt-5.6-luna` and supplies reasoning and hosted web search
+with `tool_choice = auto`. When local tools are enabled, it also receives strict
+function schemas for files, commands, SSH, desktop, browser and integrations.
+The live prompt delegates system work; the backend discovers configured access
+through `tools_list` and reports actual tool results.
+
+Completed backend responses queue function batches for a separate asynchronous
+worker. Calls execute sequentially without blocking the audio loop; duplicate
+call IDs are rejected. Results are submitted as function-call output items,
+followed by a backend continuation. Session shutdown cancels the worker and
+stops local child process groups. Remote actions and already started file writes
+may have completed despite cancellation.
+
+File tools enforce configured roots and protected credential paths. Mutations
+and commands use independent local approval dialogs. Command output requires
+separate review before sharing. Child processes inherit a small environment
+allowlist, including desktop connections and SSH-agent access. Arbitrary commands
+have the user's operating-system permissions, not a filesystem sandbox.
 
 Microphone chunks use `session.input_audio.append`. Output arrives through
 `session.output_audio.delta`. Input transcripts are native
@@ -38,7 +52,10 @@ There is no VAD cancellation, audio commit, voice-turn `response.create`, or
 conversation-item truncation. Incoming speech does not clear the playback queue:
 GPT-Live decides how to respond to interruptions and backchannels. The daemon
 plays audio in order and derives the speaking indicator from audible playback,
-with a short hold to avoid flicker. Silent output does not keep the session alive.
+with a 1.8-second hold across phrase pauses, extended by ongoing output transcript
+activity. User speech can release the hold after 300 ms without audible output.
+This is a presentation heuristic because GPT-Live has no speech-done event; it
+does not change audio, interruption handling, or the inactivity timer. Silent output does not keep the session alive.
 Backend completion is independent of spoken output and does not mark speech done.
 
 Mute immediately substitutes zeros for microphone samples while preserving the
@@ -72,7 +89,9 @@ file lock prevents concurrent daemons, including manual-live instances.
 Handshake and session startup have deadlines. Audio queues are bounded; playback
 backlog over two seconds fails instead of creating a long interruption delay.
 Lost microphone input, transport failure, explicit stop or inactivity ends the
-session. Backend work does not suppress the idle deadline indefinitely.
+session. Pending local tools keep the session alive through approval and execution;
+each dialog and process has a timeout. Other backend work remains subject to the
+idle deadline.
 
 ## Wake detection and HUD
 
@@ -82,7 +101,7 @@ voice. Synthetic tests do not establish real-room false-accept or miss rates.
 Only feature templates are stored; enrollment recordings are discarded.
 
 The optional `nebula-ui` process connects to the private runtime socket and can
-reconnect after daemon restarts. Start it separately in the graphical session.
+reconnect after daemon restarts. The daemon launches it automatically in a graphical session and restarts a failed HUD. A separate lock prevents duplicate overlays. Without a graphical environment, start the HUD from the desktop session.
 The bottom-center Wayland layer takes no keyboard focus. Standby/errors fade;
 conversation and mute states remain visible. Unsupported compositors use desktop
 notifications. Shared-memory drawing buffers wait for compositor release before
@@ -97,3 +116,11 @@ Protocol sources: [GPT-Live WebSocket reference](https://developers.openai.com/a
 [migration](https://developers.openai.com/api/docs/guides/live-migration),
 [session lifecycle](https://developers.openai.com/api/docs/guides/live-conversations),
 and [delegation](https://developers.openai.com/api/docs/guides/live-delegation).
+
+The island renders at a 16 ms cadence while visible, with time-based waveform
+smoothing, eased fades and crossfading labels and colours. Its 288 × 100 logical
+surface leaves transparent space for a separate activity pill; only the main
+272 × 52 pill accepts clicks. Top placement puts activity below the island,
+and bottom placement puts it above. Backend response and web-search events
+supply fixed activity labels independently of the voice phase, so speaking
+can remain visible during a search. No queries or tool arguments enter the HUD.

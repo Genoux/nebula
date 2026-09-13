@@ -2,9 +2,12 @@
 //! individual pieces, each runnable on its own for debugging.
 
 mod daemon;
+mod hud;
 mod ipc;
 mod live;
+mod speech_display;
 mod test_audio;
+mod tools;
 mod wake;
 
 use anyhow::{Context, Result};
@@ -19,7 +22,7 @@ use tokio::sync::{mpsc, watch};
 
 #[derive(Parser, Debug)]
 #[command(name = "nebula", version, about = "Local-first voice assistant")]
-#[command(group(clap::ArgGroup::new("mode").args(["check", "check_live", "test_audio", "train_wake", "test_wake", "manual_live"]).multiple(false)))]
+#[command(group(clap::ArgGroup::new("mode").args(["check", "check_live", "check_web", "check_tools", "check_tools_live", "test_audio", "train_wake", "test_wake", "manual_live"]).multiple(false)))]
 struct Args {
     /// Validate configuration, secrets and their permissions, then exit.
     /// Prints what is wrong, never what is secret.
@@ -29,6 +32,18 @@ struct Args {
     /// Test GPT-Live startup, generated audio and finalization using synthetic silence.
     #[arg(long)]
     check_live: bool,
+
+    /// Verify a real web search through the GPT-Live reasoning backend.
+    #[arg(long)]
+    check_web: bool,
+
+    /// Show local tool availability without loading credentials or connecting to servers.
+    #[arg(long)]
+    check_tools: bool,
+
+    /// Test a harmless tools_list function call through GPT-Live using synthetic silence.
+    #[arg(long)]
+    check_tools_live: bool,
 
     /// Open the microphone and speakers, play the local tones, and measure
     /// the acoustic round trip.
@@ -79,10 +94,13 @@ fn main() -> Result<()> {
     };
     init_logging(&config.logging.level);
 
+    if args.check_tools {
+        return tools::check(&config);
+    }
     if args.check {
         return check(&config, &config_path, key_from_service);
     }
-    if args.check_live {
+    if args.check_live || args.check_web || args.check_tools_live {
         let problems = config.problems();
         if !problems.is_empty() {
             anyhow::bail!("{}", problems.join("; "));
@@ -91,7 +109,12 @@ fn main() -> Result<()> {
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
             .build()?;
-        return runtime.block_on(live::check_connection(&config, key.expose()));
+        return runtime.block_on(live::check_connection(
+            &config,
+            key.expose(),
+            args.check_web,
+            args.check_tools_live,
+        ));
     }
     if args.test_audio {
         return test_audio::run(&config, args.no_loopback);
@@ -106,7 +129,7 @@ fn main() -> Result<()> {
         return manual_live(&config, key_from_service);
     }
 
-    match daemon::run(config, key_from_service) {
+    match daemon::run(config, key_from_service, config_path) {
         Err(e) if e.downcast_ref::<daemon::StartupError>().is_some() => {
             tracing::error!("{e:#}");
             std::process::exit(daemon::EX_CONFIG);

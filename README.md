@@ -13,4 +13,4 @@ cargo test --workspace --locked
 
 Start with [setup](docs/setup.md). See [architecture](docs/architecture.md), [troubleshooting](docs/troubleshooting.md), and [validation status](docs/validation.md).
 
-GPT-Live-1 handles voice and interruptions; a configurable Responses backend handles reasoning without tools. Setup requires an API key and a wake model trained on your voice. The template wake detector is experimental; synthetic tests do not establish real-world detection accuracy.
+GPT-Live-1 handles voice and interruptions; a configurable Responses backend handles reasoning, web search, and optional local file, terminal, SSH, desktop, browser and integration tools. See [tool setup](docs/setup.md#local-tools) for configuration and current limits. Setup requires an API key and a wake model trained on your voice. The template wake detector is experimental; synthetic tests do not establish real-world detection accuracy.

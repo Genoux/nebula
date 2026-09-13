@@ -52,3 +52,56 @@ not enabled by the migration.
 
 See [setup](setup.md), [speaker configuration](speaker-audio.md), and
 [architecture](architecture.md).
+
+## HUD startup follow-up — September 13, 2026
+
+The daemon now starts the enabled HUD in graphical sessions and restarts failed
+HUD processes. A UI instance lock prevents overlapping overlays. The workspace
+now has 151 passing tests. Formatting, Clippy and the release build pass.
+An isolated daemon smoke test confirms automatic startup, duplicate suppression,
+recovery after a killed HUD, and daemon shutdown. Both installed binaries were
+replaced; the HUD mapped at bottom center for the existing user daemon.
+
+## Conversation polish and web search — September 13, 2026
+
+The speaking indicator holds through brief phrase pauses and is refreshed by
+ongoing assistant transcript activity. Tests cover pause release, longer phrases,
+user takeover, and silence without speech. The idle timeout still tracks actual
+activity rather than the displayed speaking hold.
+
+The reasoning backend now has hosted web search with automatic tool selection.
+`nebula --check-web` passed against the actual GPT-Live API, including a completed
+web-search tool call, backend completion, generated audio and graceful close.
+No microphone audio was submitted. All 157 automated tests, formatting, Clippy,
+and the release build pass. Restart the daemon to apply these changes to a new
+conversation session.
+
+## UI polish — September 13, 2026
+
+Added a separate reasoning/web-search activity pill, eased visibility and label
+transitions, time-based level and colour smoothing, and a 16 ms frame cadence.
+Renderer checks cover both screen edges at 2× scale; the resulting software
+render was visually reviewed. Protocol tests cover activity serialization and
+parallel search completion. The speaking pause hold remains independent of
+backend activity.
+
+## Local tooling — September 13, 2026
+
+The enabled backend exposes file, terminal, SSH, desktop, browser and registered
+integration functions. All 173 automated tests pass, including function-call
+deduplication and result handling, denied actions, revision conflicts, protected
+paths, output sharing, output limits, process timeout and environment inheritance.
+Formatting, Clippy with warnings denied, and the release build pass.
+
+Fixed a second environment clear that removed the allowlisted desktop and
+SSH-agent settings from child processes; Hyprland instance selection is also
+preserved. Both binaries are installed, and local tools are enabled for
+`/home/john`. The installed `--check-tools` finds all required executables.
+The previous session's live diagnostic verified `tools_list`, result submission
+and backend continuation; that paid API check was not repeated in this follow-up.
+
+JB Media remains unconfigured pending confirmation of its SSH destination.
+No integrations are registered. Browser support is URL opening and public page
+text, and desktop support is window listing/focus and file opening. Logged-in
+browser automation and general mouse/keyboard control are not implemented.
+The daemon remains stopped, ready for a manual launch.

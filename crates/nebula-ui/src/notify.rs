@@ -26,7 +26,7 @@ pub fn run(statuses: &Receiver<UiStatus>) {
 
 fn worth_notifying(status: &UiStatus) -> bool {
     matches!(
-        status,
+        status.phase(),
         UiStatus::Connecting | UiStatus::Muted | UiStatus::Error { .. }
     )
 }

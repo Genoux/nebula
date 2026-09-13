@@ -81,8 +81,8 @@ impl SessionStart {
                     responses: Backend {
                         model: backend.into(),
                         instructions: backend_instructions.into(),
-                        tools: vec![],
-                        tool_choice: "none",
+                        tools: vec![serde_json::json!({"type":"web_search"})],
+                        tool_choice: "auto",
                     },
                 },
                 store: false,
@@ -98,6 +98,8 @@ pub enum ServerEvent {
     Started { session: StartedSession },
     #[serde(rename = "session.output_audio.delta")]
     Audio { delta: String },
+    #[serde(rename = "session.output_transcript.delta")]
+    OutputTranscript { delta: String },
     #[serde(rename = "session.input_transcript.delta")]
     InputTranscript {
         delta: String,
@@ -105,7 +107,10 @@ pub enum ServerEvent {
         end_ms: u64,
     },
     #[serde(rename = "response.event")]
-    Response { event: BackendEvent },
+    Response {
+        event: Box<BackendEvent>,
+        delegation_id: Option<String>,
+    },
     #[serde(rename = "session.input_audio.muted")]
     Muted { client_event_id: String },
     #[serde(rename = "session.input_audio.unmuted")]
@@ -127,9 +132,23 @@ pub struct StartedSession {
 
 #[derive(Debug, Deserialize)]
 pub struct BackendEvent {
+    pub response_id: Option<String>,
+    pub item_id: Option<String>,
     #[serde(rename = "type")]
     pub kind: String,
     pub response: Option<BackendResponse>,
+    pub item: Option<BackendItem>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct BackendItem {
+    pub call_id: Option<String>,
+    pub name: Option<String>,
+    pub arguments: Option<String>,
+    pub id: Option<String>,
+    #[serde(rename = "type")]
+    pub kind: String,
+    pub status: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -165,7 +184,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn live_start_has_shared_audio_and_a_tool_free_backend() {
+    fn live_start_has_shared_audio_and_a_web_search_backend() {
         let start = SessionStart::new("gpt-live-1", "marin", "gpt-5.6-luna", "voice", "reasoning");
         let actual = serde_json::to_value(start).unwrap();
         assert_eq!(
@@ -175,7 +194,7 @@ mod tests {
                 "session": {
                     "model":"gpt-live-1", "instructions":"voice", "store":false,
                     "audio":{"format":{"type":"audio/pcm","rate":24000},"output":{"voice":"marin"}},
-                    "delegation":{"type":"responses","responses":{"model":"gpt-5.6-luna","instructions":"reasoning","tools":[],"tool_choice":"none"}}
+                    "delegation":{"type":"responses","responses":{"model":"gpt-5.6-luna","instructions":"reasoning","tools":[{"type":"web_search"}],"tool_choice":"auto"}}
                 }
             })
         );

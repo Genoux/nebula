@@ -731,6 +731,7 @@ dependencies = [
  "nebula-core",
  "nebula-live",
  "nebula-wake",
+ "serde",
  "serde_json",
  "tokio",
  "tracing",

@@ -14,6 +14,10 @@ pub use crate::state::Event;
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "status", rename_all = "snake_case")]
 pub enum UiStatus {
+    WithActivity {
+        phase: Box<UiStatus>,
+        activity: UiActivity,
+    },
     Standby,
     Connecting,
     /// `level` is 0.0..=1.0 microphone loudness, for the bars.
@@ -42,7 +46,43 @@ pub enum UiCommand {
     EndSession,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum UiActivity {
+    Reasoning,
+    WebSearch,
+    Files,
+    Terminal,
+    Server,
+    Desktop,
+    Browser,
+    Integration,
+    Approval,
+}
+
 impl UiStatus {
+    pub fn phase(&self) -> &Self {
+        match self {
+            Self::WithActivity { phase, .. } => phase.phase(),
+            _ => self,
+        }
+    }
+    pub fn activity(&self) -> Option<UiActivity> {
+        match self {
+            Self::WithActivity { activity, .. } => Some(*activity),
+            _ => None,
+        }
+    }
+    pub fn with_activity(self, activity: Option<UiActivity>) -> Self {
+        match activity {
+            Some(activity) => Self::WithActivity {
+                phase: Box::new(self.phase().clone()),
+                activity,
+            },
+            None => self.phase().clone(),
+        }
+    }
+
     pub fn to_line(&self) -> String {
         let mut line = serde_json::to_string(self).expect("UiStatus has no unserialisable field");
         line.push('\n');
@@ -53,6 +93,16 @@ impl UiStatus {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn activity_preserves_the_voice_phase_on_the_wire() {
+        let phase = UiStatus::Speaking { level: 0.4 };
+        let status = phase.clone().with_activity(Some(UiActivity::WebSearch));
+        let received: UiStatus = serde_json::from_str(&status.to_line()).unwrap();
+        assert_eq!(received.phase(), &phase);
+        assert_eq!(received.activity(), Some(UiActivity::WebSearch));
+        assert_eq!(received.with_activity(None), phase);
+    }
 
     #[test]
     fn a_status_round_trips_as_one_line() {

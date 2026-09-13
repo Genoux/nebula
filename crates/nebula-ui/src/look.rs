@@ -36,7 +36,8 @@ pub struct Look {
 }
 
 pub fn look(status: &UiStatus) -> Look {
-    let (color, motion, label, orb_alpha) = match status {
+    let (color, motion, label, orb_alpha) = match status.phase() {
+        UiStatus::WithActivity { phase, .. } => return look(phase),
         UiStatus::Standby => (GREY, Motion::Still, "Nebula ready".to_string(), 0.5),
         UiStatus::Connecting => (BLUE, Motion::Pulse { hz: 1.6 }, "Connecting".into(), 1.0),
         UiStatus::Listening { .. } => (BLUE, Motion::Bars, "Listening".into(), 1.0),
@@ -54,7 +55,7 @@ pub fn look(status: &UiStatus) -> Look {
 }
 
 pub fn level(status: &UiStatus) -> f32 {
-    match status {
+    match status.phase() {
         UiStatus::Listening { level } | UiStatus::Speaking { level } => level.clamp(0.0, 1.0),
         _ => 0.0,
     }
@@ -63,15 +64,15 @@ pub fn level(status: &UiStatus) -> f32 {
 /// Whether two statuses are the same picture. Level changes are not a change -
 /// they arrive twenty times a second and must not restart the hide timer.
 pub fn same_kind(a: &UiStatus, b: &UiStatus) -> bool {
-    match (a, b) {
+    match (a.phase(), b.phase()) {
         (UiStatus::Error { message: x }, UiStatus::Error { message: y }) => x == y,
-        _ => std::mem::discriminant(a) == std::mem::discriminant(b),
+        _ => std::mem::discriminant(a.phase()) == std::mem::discriminant(b.phase()),
     }
 }
 
 /// Standby and errors fade away; anything happening in a session stays up.
 pub fn stays_visible(status: &UiStatus, since_change: Duration, hide_after: Duration) -> bool {
-    match status {
+    match status.phase() {
         UiStatus::Standby | UiStatus::Error { .. } => since_change < hide_after,
         _ => true,
     }

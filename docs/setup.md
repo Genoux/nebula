@@ -38,7 +38,7 @@ The file must be a regular file owned by you, mode 0600, with no duplicate key a
 
 The example config selects `gpt-live-1` and `marin`, with `gpt-5.6-luna` as the
 reasoning backend. Configure `session.backend_model` to use another supported
-Responses model. Backend tools are disabled. Voice time and delegated backend
+Responses model. Hosted web search is enabled for current information and explicit lookups. Voice time and delegated backend
 usage are billed separately. See the [official GPT-Live guide](https://developers.openai.com/api/docs/guides/live).
 
 The previous Realtime fields `end_of_turn_silence_ms`, `transcription_model`, and
@@ -55,7 +55,80 @@ Before a microphone conversation, test the actual API connection with:
 This paid, short test sends synthetic silence and a fixed arithmetic prompt,
 checks the configured reasoning backend and generated voice audio, then
 finalizes the session. It does not capture or play microphone/speaker audio.
-It requires the key and config but no wake model or audio devices.
+It requires the key and config but no wake model or audio devices. To verify a completed internet search, run:
+
+```sh
+~/.local/bin/nebula --check-web
+```
+
+This sends a fixed public search request through the reasoning backend and
+checks for a completed web-search tool call, backend completion, generated audio,
+and session finalization. It does not send microphone audio. Search and backend
+usage are billed by the API.
+
+
+## Local tools
+
+Local tools are disabled by default. Add this to your local config to enable
+file access within selected absolute folders, terminal commands, Hyprland window
+listing/focus, and opening files and browser URLs:
+
+```toml
+[tools]
+enabled = true
+roots = ["/home/john"]
+timeout_seconds = 60
+```
+
+File writes and commands require a Zenity dialog showing the requested action.
+Command output stays local unless you separately approve sharing the displayed
+result with the model. Closing a dialog denies the request. Launch Nebula from
+your graphical session so these dialogs can appear. Tools require `zenity`,
+`sh`, `ssh`, `hyprctl`, `xdg-open`, `curl`, and `python3` for their respective
+capabilities. Commands run as your user; configured folders constrain file tools
+and terminal starting directories, not the commands themselves.
+
+Known credential paths are blocked by file tools and recognizable credential
+content is redacted. These checks cannot identify every secret in arbitrary
+files or command output; review output before sharing it. Authentication stays
+in local SSH configuration and integration executables. Do not put passwords,
+private keys or tokens in tool arguments or this config.
+
+For a server, first configure and verify an SSH host alias locally, then add:
+
+```toml
+[[tools.servers]]
+name = "jb-media"
+ssh_host = "jb-media"
+```
+
+This example does not establish JB Media's address. SSH uses batch mode and
+requires an already trusted host key. A timed-out remote command may still have
+run; inspect its state before retrying.
+
+Integrations are explicitly registered local executables; input arrives on stdin:
+
+```toml
+[[tools.integrations]]
+name = "project-status"
+program = "/home/john/.local/bin/project-status"
+args = []
+```
+
+Browser tools open HTTP(S) URLs and fetch page text without browser cookies or
+JavaScript. They do not control logged-in tabs. Desktop tools list/focus windows
+and open files; they do not provide mouse or keyboard automation.
+
+```sh
+~/.local/bin/nebula --check-tools
+~/.local/bin/nebula --check-tools-live
+```
+
+The first command checks local configuration and executable availability without
+network access. The second is a paid API diagnostic: it executes only
+`tools_list`, shares configured folder paths and server/integration names with
+the model, and verifies result submission and spoken-response generation using
+synthetic silence. It does not capture microphone audio or execute system actions.
 
 ## Test audio and train the wake phrase
 
@@ -80,12 +153,13 @@ To test “Hey Nebula,” set `wake_word.phrase = "hey nebula"`, then train and 
 
 Wait for “connected - speak now.” Test a short response, interrupt it while speaking, then say “Nebula, stop.” This mode bypasses the wake word and has no HUD connection.
 
-For the complete flow, use two terminals:
+For the complete flow, run Nebula from a terminal in your graphical session:
 
 ```sh
 ~/.local/bin/nebula
-~/.local/bin/nebula-ui
 ```
+
+The daemon starts `nebula-ui` automatically when `ui.enabled = true` and restarts it if it crashes. A separately started HUD is reused. The ready indicator fades after eight seconds; it reappears during conversation. `--manual-live` remains an audio-only diagnostic.
 
 Say the trained phrase and wait for the Listening indicator. The wake tone confirms detection; Connecting means the cloud session is not yet ready. Live microphone capture starts after the server sends `session.started`. Audio spoken during Connecting is not buffered.
 

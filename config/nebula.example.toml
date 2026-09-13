@@ -39,3 +39,8 @@ hide_after_seconds = 8
 [logging]
 # error | warn | info | debug | trace. RUST_LOG overrides this when set.
 level = "info"
+
+[tools]
+enabled = false
+roots = []
+timeout_seconds = 60

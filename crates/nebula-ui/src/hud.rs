@@ -27,15 +27,13 @@ use crate::link::Link;
 use crate::look::{self, Motion, Rgb};
 use crate::paint::{self, Canvas, Rect, Text};
 use nebula_core::config::Ui;
-use nebula_core::event::{UiCommand, UiStatus};
+use nebula_core::event::{UiActivity, UiCommand, UiStatus};
 
-const WIDTH: u32 = 240;
-const HEIGHT: u32 = 44;
+const WIDTH: u32 = 288;
+const HEIGHT: u32 = 100;
 const MARGIN: i32 = 12;
 const FONT_PX: f32 = 13.0;
-/// ~30fps while visible: the motion is slow pulses and smoothed bars, and a
-/// status indicator has no business competing with the desktop for frames.
-const FRAME: Duration = Duration::from_millis(33);
+const FRAME: Duration = Duration::from_millis(16);
 /// How often a hidden HUD wakes to check for a new status.
 const IDLE_WAKE: Duration = Duration::from_millis(250);
 const FADE_IN: f32 = 0.15;
@@ -103,7 +101,7 @@ impl Hud {
         let mut changed_at = started;
         let mut last_frame = started;
         let mut opacity = 0.0f32;
-        let mut shown_level = 0.0f32;
+        let mut visual = Visual::new(at_top);
         let mut island: Option<Island> = None;
         let mut buffers: Option<Buffers> = None;
 
@@ -136,7 +134,7 @@ impl Hud {
 
             let wanted = look::stays_visible(&status, now - changed_at, hide_after);
             opacity = step_opacity(opacity, wanted, dt);
-            shown_level += (look::level(&status) - shown_level) * 0.35;
+            visual.update(&status, dt);
 
             let qh = self.queue.handle();
             if (wanted || opacity > 0.0) && island.is_none() {
@@ -160,7 +158,7 @@ impl Hud {
                     &mut frame.canvas,
                     &status,
                     text.as_mut(),
-                    shown_level,
+                    &visual,
                     elapsed,
                     opacity,
                     scale as f32,
@@ -199,6 +197,72 @@ impl Hud {
     }
 }
 
+struct Visual {
+    level: f32,
+    color: Rgb,
+    activity: Option<UiActivity>,
+    activity_opacity: f32,
+    at_top: bool,
+    label: String,
+    previous_label: String,
+    transition: f32,
+}
+
+impl Visual {
+    fn new(at_top: bool) -> Self {
+        Self {
+            level: 0.0,
+            color: look::look(&UiStatus::Standby).color,
+            activity: None,
+            activity_opacity: 0.0,
+            at_top,
+            label: look::look(&UiStatus::Standby).label,
+            previous_label: String::new(),
+            transition: 1.0,
+        }
+    }
+    fn main_y(&self) -> f32 {
+        if self.at_top { 4.0 } else { 44.0 }
+    }
+    fn update(&mut self, status: &UiStatus, dt: f32) {
+        let label = look::look(status).label;
+        if label != self.label {
+            self.previous_label = std::mem::replace(&mut self.label, label);
+            self.transition = 0.0;
+        }
+        self.transition = (self.transition + dt / 0.22).min(1.0);
+        let target = look::level(status);
+        self.level = approach(
+            self.level,
+            target,
+            dt,
+            if target > self.level { 0.07 } else { 0.18 },
+        );
+        let target = look::look(status).color;
+        self.color = Rgb(
+            approach(self.color.0, target.0, dt, 0.22),
+            approach(self.color.1, target.1, dt, 0.22),
+            approach(self.color.2, target.2, dt, 0.22),
+        );
+        if let Some(activity) = status.activity() {
+            self.activity = Some(activity);
+        }
+        self.activity_opacity =
+            step_opacity(self.activity_opacity, status.activity().is_some(), dt);
+        if self.activity_opacity == 0.0 {
+            self.activity = None;
+        }
+    }
+}
+
+fn approach(current: f32, target: f32, dt: f32, tau: f32) -> f32 {
+    current + (target - current) * (1.0 - (-dt / tau).exp())
+}
+
+fn ease(t: f32) -> f32 {
+    t * t * (3.0 - 2.0 * t)
+}
+
 fn step_opacity(current: f32, wanted: bool, dt: f32) -> f32 {
     if wanted {
         (current + dt / FADE_IN).min(1.0)
@@ -215,25 +279,43 @@ fn draw(
     canvas: &mut Canvas,
     status: &UiStatus,
     text: Option<&mut Text>,
-    level: f32,
+    visual: &Visual,
     seconds: f32,
     opacity: f32,
     s: f32,
 ) {
     canvas.clear();
     let look = look::look(status);
-    let (w, h) = (WIDTH as f32 * s, HEIGHT as f32 * s);
+    let level = visual.level;
+    let opacity = ease(opacity);
+    let w = WIDTH as f32 * s;
+    let y = visual.main_y() * s;
+    let color = visual.color;
 
     let pill = Rect {
-        x: 0.5 * s,
-        y: 0.5 * s,
-        w: w - s,
-        h: h - s,
+        x: 8.0 * s,
+        y,
+        w: w - 16.0 * s,
+        h: 52.0 * s,
     };
-    canvas.rounded_rect(pill, pill.h / 2.0, look::PILL, 0.78 * opacity);
+    for spread in (1..=5).rev() {
+        let d = spread as f32 * s;
+        canvas.rounded_rect(
+            Rect {
+                x: pill.x - d,
+                y: pill.y - d + 2.0 * s,
+                w: pill.w + 2.0 * d,
+                h: pill.h + 2.0 * d,
+            },
+            pill.h / 2.0 + d,
+            Rgb(0.0, 0.0, 0.0),
+            0.025 * opacity,
+        );
+    }
+    canvas.rounded_rect(pill, pill.h / 2.0, look::PILL, 0.94 * opacity);
     canvas.ring(pill, pill.h / 2.0, s, look::INK, 0.10 * opacity);
 
-    let (orb_x, orb_y) = (22.0 * s, h / 2.0);
+    let (orb_x, orb_y) = (34.0 * s, y + 26.0 * s);
     let (radius, glow) = match look.motion {
         Motion::Pulse { hz } => {
             let p = look::pulse(hz, seconds);
@@ -246,26 +328,20 @@ fn draw(
         orb_x,
         orb_y,
         (radius + 5.0) * s,
-        look.color,
+        color,
         glow * look.orb_alpha * opacity,
     );
-    canvas.circle(
-        orb_x,
-        orb_y,
-        radius * s,
-        look.color,
-        look.orb_alpha * opacity,
-    );
+    canvas.circle(orb_x, orb_y, radius * s, color, look.orb_alpha * opacity);
 
     let bars = if look.motion == Motion::Bars {
-        draw_bars(canvas, level, seconds, look.color, opacity, s)
+        draw_bars(canvas, level, seconds, color, opacity, s, orb_y)
     } else {
         0.0
     };
 
     if let Some(text) = text {
         text.set_px(FONT_PX * s);
-        let (left, right) = (40.0 * s, w - 16.0 * s - bars);
+        let (left, right) = (56.0 * s, w - 24.0 * s - bars);
         let label = paint::elide(&look.label, right - left, |candidate| text.width(candidate));
         text.draw(
             canvas,
@@ -273,8 +349,67 @@ fn draw(
             left,
             orb_y + 4.5 * s,
             look::INK,
-            0.92 * opacity,
+            0.92 * opacity * ease(visual.transition),
         );
+        if visual.transition < 1.0 {
+            let previous = paint::elide(&visual.previous_label, right - left, |candidate| {
+                text.width(candidate)
+            });
+            text.draw(
+                canvas,
+                &previous,
+                left,
+                orb_y + 4.5 * s,
+                look::INK,
+                0.92 * opacity * (1.0 - ease(visual.transition)),
+            );
+        }
+        if let Some(activity) = visual.activity {
+            let alpha = ease(visual.activity_opacity) * opacity;
+            let ay = if visual.at_top { 68.0 } else { 8.0 };
+            let ay = (ay + (1.0 - ease(visual.activity_opacity)) * 6.0) * s;
+            let badge = Rect {
+                x: 34.0 * s,
+                y: ay,
+                w: 220.0 * s,
+                h: 28.0 * s,
+            };
+            canvas.rounded_rect(badge, 14.0 * s, look::PILL, 0.94 * alpha);
+            canvas.ring(badge, 14.0 * s, s, Rgb(0.66, 0.56, 1.0), 0.25 * alpha);
+            let accent = Rgb(0.73, 0.65, 1.0);
+            let cx = 50.0 * s;
+            let cy = ay + 14.0 * s;
+            for i in 0..8 {
+                let angle = seconds * 2.5 + i as f32 * std::f32::consts::TAU / 8.0;
+                canvas.circle(
+                    cx + 4.5 * s * angle.cos(),
+                    cy + 4.5 * s * angle.sin(),
+                    1.15 * s,
+                    accent,
+                    alpha * (0.2 + 0.8 * i as f32 / 7.0),
+                );
+            }
+            text.set_px(FONT_PX * s);
+            let label = match activity {
+                UiActivity::Reasoning => "Thinking it through",
+                UiActivity::WebSearch => "Searching the web",
+                UiActivity::Files => "Working with files",
+                UiActivity::Terminal => "Running a command",
+                UiActivity::Server => "Working on the server",
+                UiActivity::Desktop => "Using the desktop",
+                UiActivity::Browser => "Using the browser",
+                UiActivity::Integration => "Running an integration",
+                UiActivity::Approval => "Waiting for approval",
+            };
+            text.draw(
+                canvas,
+                label,
+                64.0 * s,
+                cy + 4.0 * s,
+                look::INK,
+                0.86 * alpha,
+            );
+        }
     }
 }
 
@@ -286,11 +421,11 @@ fn draw_bars(
     color: Rgb,
     opacity: f32,
     s: f32,
+    middle: f32,
 ) -> f32 {
     let (bar_w, gap, tallest, shortest) = (3.0 * s, 3.0 * s, 18.0 * s, 3.0 * s);
     let total = look::BARS as f32 * bar_w + (look::BARS - 1) as f32 * gap;
-    let x0 = WIDTH as f32 * s - 18.0 * s - total;
-    let middle = HEIGHT as f32 * s / 2.0;
+    let x0 = WIDTH as f32 * s - 28.0 * s - total;
     for (i, fraction) in look::bar_heights(level, seconds).iter().enumerate() {
         let height = shortest + (tallest - shortest) * fraction;
         let bar = Rect {
@@ -335,7 +470,7 @@ impl Island {
         layer.set_keyboard_interactivity(zwlr_layer_surface_v1::KeyboardInteractivity::None);
 
         let region = compositor.create_region(qh, ());
-        region.add(0, 0, WIDTH as i32, HEIGHT as i32);
+        region.add(8, if at_top { 4 } else { 44 }, WIDTH as i32 - 16, 52);
         surface.set_input_region(Some(&region));
         region.destroy();
 
@@ -581,6 +716,50 @@ mod tests {
     use super::*;
 
     #[test]
+    fn animation_timing_is_independent_of_frame_rate() {
+        let status = UiStatus::Speaking { level: 0.8 }.with_activity(Some(UiActivity::WebSearch));
+        let mut slow = Visual::new(false);
+        let mut fast = Visual::new(false);
+        for _ in 0..30 {
+            slow.update(&status, 1.0 / 30.0);
+        }
+        for _ in 0..60 {
+            fast.update(&status, 1.0 / 60.0);
+        }
+        assert!((slow.level - fast.level).abs() < 0.0001);
+        assert!((slow.color.1 - fast.color.1).abs() < 0.0001);
+        slow.update(&UiStatus::Speaking { level: 0.0 }, 0.1);
+        assert!(slow.activity.is_some());
+        slow.update(&UiStatus::Standby, 1.0);
+        assert!(slow.activity.is_none());
+    }
+
+    #[test]
+    fn activity_renders_alongside_speaking_at_both_edges() {
+        for top in [false, true] {
+            let status =
+                UiStatus::Speaking { level: 0.5 }.with_activity(Some(UiActivity::WebSearch));
+            let mut visual = Visual::new(top);
+            visual.update(&status, 1.0);
+            let mut canvas = Canvas::new(WIDTH as usize * 2, HEIGHT as usize * 2);
+            let mut font = Text::load(FONT_PX * 2.0);
+            draw(&mut canvas, &status, font.as_mut(), &visual, 1.0, 1.0, 2.0);
+            assert_eq!(canvas.pixels[3], 0);
+            if let Ok(directory) = std::env::var("NEBULA_RENDER_DIR") {
+                std::fs::write(
+                    std::path::Path::new(&directory).join(if top {
+                        "top.bgra"
+                    } else {
+                        "bottom.bgra"
+                    }),
+                    &canvas.pixels,
+                )
+                .unwrap();
+            }
+        }
+    }
+
+    #[test]
     fn opacity_fades_in_and_out_within_bounds() {
         assert_eq!(step_opacity(0.0, true, 1.0), 1.0);
         assert_eq!(step_opacity(1.0, false, 1.0), 0.0);
@@ -609,7 +788,15 @@ mod tests {
                 message: "offline".into(),
             },
         ] {
-            draw(&mut canvas, &status, None, 0.5, 1.0, 1.0, 1.0);
+            draw(
+                &mut canvas,
+                &status,
+                None,
+                &Visual::new(false),
+                1.0,
+                1.0,
+                1.0,
+            );
             assert!(
                 canvas.pixels.iter().any(|&b| b > 0),
                 "{status:?} drew nothing"
