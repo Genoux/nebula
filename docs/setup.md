@@ -80,13 +80,19 @@ roots = ["/home/john"]
 timeout_seconds = 60
 ```
 
-File writes and commands require a Zenity dialog showing the requested action.
+By default, file writes and commands require a Zenity dialog showing the requested action.
 Command output stays local unless you separately approve sharing the displayed
 result with the model. Closing a dialog denies the request. Launch Nebula from
 your graphical session so these dialogs can appear. Tools require `zenity`,
 `sh`, `ssh`, `hyprctl`, `xdg-open`, `curl`, and `python3` for their respective
 capabilities. Commands run as your user; configured folders constrain file tools
 and terminal starting directories, not the commands themselves.
+
+To skip all action and output-sharing dialogs, set `approval = "never"` in the
+existing `[tools]` section and restart Nebula. The default is `"always"`. In
+`"never"` mode, commands execute as your user and requested tool output is shared
+with OpenAI automatically; Zenity is not required. Folder restrictions, protected
+credential paths, redaction, and timeouts still apply.
 
 Known credential paths are blocked by file tools and recognizable credential
 content is redacted. These checks cannot identify every secret in arbitrary
@@ -166,6 +172,10 @@ Say the trained phrase and wait for the Listening indicator. The wake tone confi
 - Left-click the pill to mute/unmute the microphone.
 - Right-click to end the live session, including while connecting.
 - `nebula-ui --toggle-mute` and `nebula-ui --end-session` provide keyboard-bindable equivalents.
+- The assistant can call `end_conversation` when you naturally say goodbye or ask
+  to finish talking. This works even with local tools disabled and returns to
+  wake-word standby. Closing allows a brief farewell, with a 15-second maximum
+  wait; it does not quit the daemon.
 - Say “Nebula, stop” or wait for `session.idle_timeout_seconds` of inactivity to return to local standby.
 - Ctrl-C and SIGTERM shut down the daemon.
 

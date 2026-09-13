@@ -79,10 +79,19 @@ pub struct Logging {
 #[serde(default, deny_unknown_fields)]
 pub struct Tools {
     pub enabled: bool,
+    pub approval: ToolApproval,
     pub roots: Vec<std::path::PathBuf>,
     pub servers: Vec<ToolServer>,
     pub integrations: Vec<Integration>,
     pub timeout_seconds: u64,
+}
+
+#[derive(Debug, Clone, Copy, Default, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ToolApproval {
+    #[default]
+    Always,
+    Never,
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq)]
@@ -105,6 +114,7 @@ impl Default for Tools {
     fn default() -> Self {
         Self {
             enabled: false,
+            approval: ToolApproval::Always,
             roots: Vec::new(),
             servers: Vec::new(),
             integrations: Vec::new(),
@@ -299,6 +309,22 @@ impl Config {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tool_approval_requires_an_explicit_valid_policy() {
+        assert_eq!(
+            Config::parse("").unwrap().tools.approval,
+            ToolApproval::Always
+        );
+        assert_eq!(
+            Config::parse("[tools]\napproval = \"never\"")
+                .unwrap()
+                .tools
+                .approval,
+            ToolApproval::Never
+        );
+        assert!(Config::parse("[tools]\napproval = \"nevr\"").is_err());
+    }
 
     #[test]
     fn empty_text_is_all_defaults() {

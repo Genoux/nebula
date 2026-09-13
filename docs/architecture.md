@@ -35,9 +35,10 @@ followed by a backend continuation. Session shutdown cancels the worker and
 stops local child process groups. Remote actions and already started file writes
 may have completed despite cancellation.
 
-File tools enforce configured roots and protected credential paths. Mutations
-and commands use independent local approval dialogs. Command output requires
-separate review before sharing. Child processes inherit a small environment
+File tools enforce configured roots and protected credential paths. With the default `tools.approval = "always"`, mutations
+and commands use independent local approval dialogs, and command output requires
+separate review before sharing. `tools.approval = "never"` skips both dialogs
+and automatically shares requested output. Child processes inherit a small environment
 allowlist, including desktop connections and SSH-agent access. Arbitrary commands
 have the user's operating-system permissions, not a filesystem sandbox.
 

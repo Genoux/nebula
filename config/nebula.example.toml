@@ -42,5 +42,6 @@ level = "info"
 
 [tools]
 enabled = false
+approval = "always"
 roots = []
 timeout_seconds = 60

@@ -213,6 +213,7 @@ async fn session(
     let event = match outcome.reason {
         EndReason::IdleTimeout => Event::IdleTimeout,
         EndReason::StopPhrase
+        | EndReason::AssistantEnded
         | EndReason::EndCommand
         | EndReason::CtrlC
         | EndReason::ServerClosed => Event::StopRequested,

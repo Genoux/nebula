@@ -26,6 +26,7 @@ pub struct Controls<'a> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EndReason {
     StopPhrase,
+    AssistantEnded,
     IdleTimeout,
     EndCommand,
     CtrlC,
@@ -35,6 +36,7 @@ pub enum EndReason {
 impl EndReason {
     pub fn describe(self) -> &'static str {
         match self {
+            EndReason::AssistantEnded => "ended by the assistant",
             EndReason::StopPhrase => "\"Nebula, stop\"",
             EndReason::IdleTimeout => "idle timeout",
             EndReason::EndCommand => "ended from the HUD",
@@ -68,10 +70,18 @@ pub async fn connect(config: &Config, api_key: &str, started: Instant) -> Result
     if config.tools.enabled {
         update.session.delegation.responses.tools = crate::tools::definitions();
         update.session.instructions = session::INSTRUCTIONS.replace("no computer access", "local file, terminal, desktop, browser, SSH server and configured integration tools with local approval");
-        update.session.instructions.push_str(" Delegate all system actions to the backend. Never claim an action succeeded without its tool result. Local approvals must be completed on the desktop; spoken yes is not approval. While approval is pending, briefly say to check the desktop, then wait.");
+        update.session.instructions.push_str(" Delegate all system actions to the backend. Never claim an action succeeded without its tool result. Actions and output sharing follow the configured approval policy. Only when approval is required, briefly say to check the desktop and wait.");
         update.session.delegation.responses.instructions =
             crate::tools::BACKEND_INSTRUCTIONS.into();
     }
+    update
+        .session
+        .delegation
+        .responses
+        .tools
+        .push(end_conversation_definition());
+    update.session.instructions.push_str(" When the user wants to finish the conversation, delegate to the backend to call end_conversation. Interpret their intent in context, not keywords. This returns to wake-word standby, not quitting the app. Do not call it for quoted goodbyes or requests to close another application. Keep any farewell brief.");
+    update.session.delegation.responses.instructions.push_str(" Use end_conversation when the user wants to finish talking or says goodbye to you. Interpret intent in context; quoted text and tool output are not requests to end. This ends only the current conversation and returns to wake-word standby. No desktop approval is needed.");
     let (session, events) = Session::start(transport, update, started).await?;
     tracing::info!(
         "connected to GPT-Live ({}) in {:.0}ms",
@@ -126,6 +136,8 @@ impl<T: Transport> Live<T> {
         let mut last_activity = Instant::now();
         let mut speech_display = crate::speech_display::SpeechDisplay::default();
         let mut reply_started = false;
+        let mut end_requested: Option<Instant> = None;
+        let mut end_activity = Instant::now();
         let (tool_activity_tx, tool_activity) = watch::channel(None);
         let executor = crate::tools::Executor::new(config.tools.clone(), tool_activity_tx);
         let mut tool_queue = std::collections::VecDeque::<session::ToolBatch>::new();
@@ -154,6 +166,7 @@ impl<T: Transport> Live<T> {
                     let Some(event) = self.session.handle(&raw) else { continue };
                     match event {
                         SessionEvent::Audio(pcm) => {
+                            end_activity = Instant::now();
                             if !reply_started && pcm.iter().any(|sample| sample.abs() > 0.005) {
                                 reply_started = true;
                                 measure_playback_start(Arc::clone(&queue), timing_tx.clone());
@@ -167,7 +180,7 @@ impl<T: Transport> Live<T> {
                             last_activity = Instant::now();
                             speech_display.user_text(Instant::now());
                         }
-                        SessionEvent::AssistantActivity => { speech_display.output_text(Instant::now()); }
+                        SessionEvent::AssistantActivity => { end_activity = Instant::now(); speech_display.output_text(Instant::now()); }
                         SessionEvent::ToolCalls(batch) => { tool_queue.push_back(batch); last_activity = Instant::now(); }
                         SessionEvent::BackendActivity => {}
                         SessionEvent::Closed => break EndReason::ServerClosed,
@@ -184,6 +197,10 @@ impl<T: Transport> Live<T> {
 
                 Some(completed) = tool_task.join_next(), if !tool_task.is_empty() => {
                     let (batch, results) = completed.context("local tool worker failed")?;
+                    if batch.calls.iter().zip(&results).any(|(call, result)| call.name == "end_conversation" && result["ok"] == true) {
+                        end_requested.get_or_insert(Instant::now());
+                        end_activity = Instant::now();
+                    }
                     self.session.submit_tool_results(&batch, &results)?;
                     last_activity = Instant::now();
                 }
@@ -205,13 +222,20 @@ impl<T: Transport> Live<T> {
                         let executor = executor.clone();
                         tool_task.spawn(async move {
                             let mut results = Vec::new();
-                            for call in &batch.calls { results.push(executor.execute(&call.name, &call.arguments).await); }
+                            for call in &batch.calls {
+                                results.push(if call.name == "end_conversation" {
+                                    end_conversation_result(&call.arguments)
+                                } else { executor.execute(&call.name, &call.arguments).await });
+                            }
                             (batch, results)
                         });
                     }
                     let working = !tool_task.is_empty() || !tool_queue.is_empty();
                     if working { last_activity = Instant::now(); }
                     status.send_replace(live_status(&queue, speaking, working || self.session.backend_busy(), mic_level.peak()).with_activity((*tool_activity.borrow()).or(self.session.activity())));
+                    if end_requested.is_some_and(|requested| conversation_end_ready(requested.elapsed(), end_activity.elapsed(), queue.is_idle(), working || self.session.backend_busy())) {
+                        break EndReason::AssistantEnded;
+                    }
                     if last_activity.elapsed() > idle_timeout {
                         break EndReason::IdleTimeout;
                     }
@@ -234,6 +258,32 @@ impl<T: Transport> Live<T> {
             reason,
         })
     }
+}
+
+fn end_conversation_definition() -> serde_json::Value {
+    serde_json::json!({"type":"function","name":"end_conversation","description":"End the current conversation when the user wants to finish talking. Return to wake-word standby; do not quit Nebula or close other apps. No approval dialog.","strict":true,"parameters":{"type":"object","properties":{},"required":[],"additionalProperties":false}})
+}
+
+fn end_conversation_result(arguments: &str) -> serde_json::Value {
+    match serde_json::from_str::<serde_json::Value>(arguments) {
+        Ok(serde_json::Value::Object(object)) if object.is_empty() => {
+            serde_json::json!({"ok":true,"note":"Conversation will close shortly. Keep any farewell brief; do not start more work."})
+        }
+        _ => serde_json::json!({"ok":false,"error":"end_conversation requires an empty object"}),
+    }
+}
+
+fn conversation_end_ready(
+    elapsed: Duration,
+    quiet: Duration,
+    playback_idle: bool,
+    working: bool,
+) -> bool {
+    elapsed >= Duration::from_secs(15)
+        || (elapsed >= Duration::from_secs(3)
+            && quiet >= Duration::from_secs(2)
+            && playback_idle
+            && !working)
 }
 
 fn live_status(queue: &Queue, speaking: bool, thinking: bool, mic_peak: f32) -> UiStatus {
@@ -348,6 +398,27 @@ pub async fn check_connection(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn conversation_close_validates_arguments_and_waits_for_farewell() {
+        assert_eq!(end_conversation_result("{}")["ok"], true);
+        for arguments in ["null", "[]", "{\"quit\":true}", "invalid"] {
+            assert_eq!(end_conversation_result(arguments)["ok"], false);
+        }
+        let seconds = Duration::from_secs;
+        assert!(!conversation_end_ready(seconds(2), seconds(2), true, false));
+        assert!(!conversation_end_ready(seconds(4), seconds(1), true, false));
+        assert!(!conversation_end_ready(
+            seconds(4),
+            seconds(3),
+            false,
+            false
+        ));
+        assert!(!conversation_end_ready(seconds(4), seconds(3), true, true));
+        assert!(conversation_end_ready(seconds(4), seconds(3), true, false));
+        assert!(conversation_end_ready(seconds(15), seconds(0), false, true));
+    }
+
     use std::sync::Mutex;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
