@@ -30,6 +30,7 @@ pub enum SessionEvent {
     UserActivity,
     AssistantActivity,
     StopRequested,
+    CloseRequested,
     BackendActivity,
     ToolCalls(ToolBatch),
     Closed,
@@ -243,7 +244,7 @@ impl<T: Transport> Session<T> {
     }
 
     pub fn backend_busy(&self) -> bool {
-        !self.backend_responses.is_empty()
+        !self.backend_responses.is_empty() || !self.pending_results.is_empty()
     }
 
     pub fn handle(&mut self, raw: &str) -> Option<SessionEvent> {
@@ -355,6 +356,15 @@ impl<T: Transport> Session<T> {
                                 ));
                             }
                             self.seen_calls.insert(call_id.clone());
+                            if name == "close_call"
+                                && serde_json::from_str::<serde_json::Value>(&arguments).is_ok_and(
+                                    |value| {
+                                        value.as_object().is_some_and(|object| object.is_empty())
+                                    },
+                                )
+                            {
+                                return Some(SessionEvent::CloseRequested);
+                            }
                             self.tool_batches
                                 .get_mut(&candidates[0])
                                 .expect("matched batch")
@@ -504,10 +514,24 @@ pub fn is_stop_command(transcript: &str) -> bool {
 }
 
 fn safe_error(error: &protocol::ApiError) -> &'static str {
+    let code = error
+        .code
+        .as_deref()
+        .filter(|code| {
+            code.len() <= 80 && code.bytes().all(|c| c.is_ascii_lowercase() || c == b'_')
+        })
+        .unwrap_or("unavailable");
+    tracing::warn!(code, "GPT-Live API rejected a request");
     match error.code.as_deref() {
         Some("invalid_api_key" | "authentication_error") => "GPT-Live authentication failed",
-        Some("insufficient_quota" | "rate_limit_exceeded") => {
-            "GPT-Live quota or rate limit reached"
+        Some("credit_balance_exhausted") => {
+            "OpenAI API credit balance is exhausted; add credits or check project billing"
+        }
+        Some("insufficient_quota") => {
+            "OpenAI API quota is exhausted; check project billing and spending limits"
+        }
+        Some("rate_limit_exceeded") => {
+            "GPT-Live rate limit reached; wait briefly before trying again"
         }
         _ => "GPT-Live request failed; check model, voice and account configuration",
     }
@@ -584,6 +608,42 @@ mod tests {
             &serde_json::json!({"type":"response.event","delegation_id":delegation,"event":event})
                 .to_string(),
         )
+    }
+
+    #[tokio::test]
+    async fn close_call_does_not_wait_for_backend_completion() {
+        let (mut s, _, _) = make().await;
+        backend(
+            &mut s,
+            "d1",
+            serde_json::json!({"type":"response.created","response":{"id":"r1"}}),
+        );
+        let call = serde_json::json!({"type":"response.output_item.done","item":{"type":"function_call","status":"completed","call_id":"close1","name":"close_call","arguments":"{}"}});
+        assert_eq!(
+            backend(&mut s, "d1", call.clone()),
+            Some(SessionEvent::CloseRequested)
+        );
+        assert_eq!(backend(&mut s, "d1", call), None);
+    }
+
+    #[tokio::test]
+    async fn invalid_close_call_does_not_close_the_session() {
+        let (mut s, _, _) = make().await;
+        backend(
+            &mut s,
+            "d1",
+            serde_json::json!({"type":"response.created","response":{"id":"r1"}}),
+        );
+        for (id, arguments) in [("one", "null"), ("two", "{\"extra\":true}")] {
+            assert_ne!(
+                backend(
+                    &mut s,
+                    "d1",
+                    serde_json::json!({"type":"response.output_item.done","item":{"type":"function_call","status":"completed","call_id":id,"name":"close_call","arguments":arguments}})
+                ),
+                Some(SessionEvent::CloseRequested)
+            );
+        }
     }
 
     #[tokio::test]
@@ -809,6 +869,19 @@ mod tests {
             };
             assert!(!message.contains("private"));
         }
+    }
+
+    #[test]
+    fn billing_and_rate_limit_errors_are_distinct() {
+        let message = |code: &str| {
+            safe_error(&protocol::ApiError {
+                code: Some(code.into()),
+            })
+        };
+        assert!(message("credit_balance_exhausted").contains("credit balance"));
+        assert!(message("insufficient_quota").contains("spending limits"));
+        assert!(message("rate_limit_exceeded").contains("wait briefly"));
+        assert!(!message("sk-private").contains("private"));
     }
 
     #[tokio::test]

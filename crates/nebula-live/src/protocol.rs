@@ -50,6 +50,8 @@ pub struct Backend {
     pub model: String,
     pub instructions: String,
     pub tools: Vec<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reasoning: Option<serde_json::Value>,
     pub tool_choice: &'static str,
 }
 
@@ -83,6 +85,7 @@ impl SessionStart {
                         instructions: backend_instructions.into(),
                         tools: vec![serde_json::json!({"type":"web_search"})],
                         tool_choice: "auto",
+                        reasoning: None,
                     },
                 },
                 store: false,
@@ -197,6 +200,18 @@ mod tests {
                     "delegation":{"type":"responses","responses":{"model":"gpt-5.6-luna","instructions":"reasoning","tools":[{"type":"web_search"}],"tool_choice":"auto"}}
                 }
             })
+        );
+    }
+
+    #[test]
+    fn backend_reasoning_effort_is_sent_when_configured() {
+        let mut start =
+            SessionStart::new("gpt-live-1", "marin", "gpt-5.6-luna", "voice", "reasoning");
+        start.session.delegation.responses.reasoning = Some(serde_json::json!({"effort":"low"}));
+        let value = serde_json::to_value(start).unwrap();
+        assert_eq!(
+            value["session"]["delegation"]["responses"]["reasoning"]["effort"],
+            "low"
         );
     }
 

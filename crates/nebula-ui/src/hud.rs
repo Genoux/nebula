@@ -114,7 +114,11 @@ impl Hud {
 
             while let Ok(next) = statuses.try_recv() {
                 if !look::same_kind(&status, &next) {
-                    changed_at = now;
+                    changed_at = if look::call_finished(&status, &next) {
+                        now.checked_sub(hide_after).unwrap_or(now)
+                    } else {
+                        now
+                    };
                 }
                 status = next;
             }

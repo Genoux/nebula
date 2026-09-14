@@ -71,6 +71,18 @@ pub fn same_kind(a: &UiStatus, b: &UiStatus) -> bool {
 }
 
 /// Standby and errors fade away; anything happening in a session stays up.
+pub fn call_finished(previous: &UiStatus, next: &UiStatus) -> bool {
+    matches!(next.phase(), UiStatus::Standby)
+        && matches!(
+            previous.phase(),
+            UiStatus::Connecting
+                | UiStatus::Listening { .. }
+                | UiStatus::Thinking
+                | UiStatus::Speaking { .. }
+                | UiStatus::Muted
+        )
+}
+
 pub fn stays_visible(status: &UiStatus, since_change: Duration, hide_after: Duration) -> bool {
     match status.phase() {
         UiStatus::Standby | UiStatus::Error { .. } => since_change < hide_after,
@@ -96,6 +108,20 @@ pub fn bar_heights(level: f32, seconds: f32) -> [f32; BARS] {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn completed_calls_dismiss_but_initial_standby_keeps_ready_indicator() {
+        assert!(call_finished(&UiStatus::Thinking, &UiStatus::Standby));
+        assert!(call_finished(
+            &UiStatus::Speaking { level: 0.4 },
+            &UiStatus::Standby
+        ));
+        assert!(!call_finished(&UiStatus::Standby, &UiStatus::Standby));
+        assert!(!call_finished(
+            &UiStatus::Thinking,
+            &UiStatus::Listening { level: 0.0 }
+        ));
+    }
 
     #[test]
     fn every_status_has_the_documented_label() {

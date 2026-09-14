@@ -51,6 +51,7 @@ pub struct Session {
     pub model: String,
     pub voice: String,
     pub backend_model: String,
+    pub backend_reasoning_effort: Option<String>,
     pub idle_timeout_seconds: u64,
 }
 
@@ -105,6 +106,8 @@ pub struct ToolServer {
 #[serde(deny_unknown_fields)]
 pub struct Integration {
     pub name: String,
+    #[serde(default)]
+    pub description: String,
     pub program: std::path::PathBuf,
     #[serde(default)]
     pub args: Vec<String>,
@@ -150,6 +153,7 @@ impl Default for Session {
             voice: "marin".into(),
             idle_timeout_seconds: 45,
             backend_model: "gpt-5.6-luna".into(),
+            backend_reasoning_effort: None,
         }
     }
 }
@@ -230,6 +234,19 @@ impl Config {
         }
         if self.session.model.starts_with("gpt-realtime") {
             found.push("session.model must select GPT-Live, not a Realtime model".into());
+        }
+        if self
+            .session
+            .backend_reasoning_effort
+            .as_deref()
+            .is_some_and(|effort| {
+                !matches!(
+                    effort,
+                    "none" | "minimal" | "low" | "medium" | "high" | "xhigh"
+                )
+            })
+        {
+            found.push("session.backend_reasoning_effort is not a supported effort level".into());
         }
         if self.session.backend_model.trim().is_empty()
             || !self

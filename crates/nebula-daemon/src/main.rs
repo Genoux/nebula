@@ -1,5 +1,4 @@
-//! The Nebula daemon. With no flags it runs the full flow; the flags are the
-//! individual pieces, each runnable on its own for debugging.
+//! One voice call with a HUD; flags expose individual diagnostics.
 
 mod daemon;
 mod hud;
@@ -230,20 +229,6 @@ fn check(
         Ok(_) => println!(
             "  ok     {} is present and the file is 0600",
             secrets::API_KEY_VAR
-        ),
-        Err(e) => {
-            println!("  FAIL   {e:#}");
-            failures += 1;
-        }
-    }
-
-    let phrase = config.wake_word.phrase.trim();
-    let model_path = paths::wake_model(phrase)?;
-    println!("wake:    {}", model_path.display());
-    match nebula_wake::Model::load(&model_path) {
-        Ok(model) => println!(
-            "  ok     \"{phrase}\" trained from {} recordings",
-            model.templates.len()
         ),
         Err(e) => {
             println!("  FAIL   {e:#}");

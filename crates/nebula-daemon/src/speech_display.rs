@@ -43,9 +43,50 @@ impl SpeechDisplay {
     }
 }
 
+#[derive(Default)]
+pub struct WorkDisplay {
+    last_busy: Option<Instant>,
+}
+
+impl WorkDisplay {
+    pub fn thinking(&mut self, busy: bool, speaking: bool, now: Instant) -> bool {
+        if busy {
+            self.last_busy = Some(now);
+            return true;
+        }
+        if speaking {
+            self.last_busy = None;
+        }
+        self.last_busy
+            .is_some_and(|last| now.duration_since(last) < Duration::from_millis(1200))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn work_display_bridges_handoffs_and_releases_after_quiet() {
+        let mut display = WorkDisplay::default();
+        let at = Instant::now();
+        assert!(!display.thinking(false, false, at));
+        assert!(display.thinking(true, false, at));
+        assert!(display.thinking(false, false, at + Duration::from_millis(500)));
+        assert!(display.thinking(true, false, at + Duration::from_millis(800)));
+        assert!(display.thinking(false, false, at + Duration::from_millis(1500)));
+        assert!(!display.thinking(false, false, at + Duration::from_millis(2000)));
+    }
+
+    #[test]
+    fn spoken_result_clears_hold_but_speech_does_not_clear_active_work() {
+        let mut display = WorkDisplay::default();
+        let at = Instant::now();
+        assert!(display.thinking(true, true, at));
+        assert!(display.thinking(false, false, at + Duration::from_millis(100)));
+        assert!(!display.thinking(false, true, at + Duration::from_millis(200)));
+        assert!(!display.thinking(false, false, at + Duration::from_millis(300)));
+    }
 
     #[test]
     fn phrase_pauses_keep_speaking_but_finished_speech_releases() {

@@ -1,8 +1,9 @@
 use std::path::PathBuf;
 use std::process::Stdio;
-use std::time::Duration;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
-pub fn start(config: PathBuf) {
+pub fn start(config: PathBuf, shutdown: Arc<AtomicBool>) {
     if !["WAYLAND_DISPLAY", "DISPLAY"]
         .iter()
         .any(|name| std::env::var_os(name).is_some_and(|value| !value.is_empty()))
@@ -20,26 +21,24 @@ pub fn start(config: PathBuf) {
         }
     };
     tokio::spawn(async move {
-        loop {
-            let mut child = match tokio::process::Command::new(&binary)
-                .arg("--config")
-                .arg(&config)
-                .env_remove("OPENAI_API_KEY")
-                .stdin(Stdio::null())
-                .kill_on_drop(true)
-                .spawn()
-            {
-                Ok(child) => child,
-                Err(error) => {
-                    tracing::warn!("could not start nebula-ui: {error}");
-                    return;
-                }
-            };
-            match child.wait().await {
-                Ok(status) if status.success() => return,
-                result => tracing::warn!("HUD exited ({result:?}); retrying in five seconds"),
+        let mut child = match tokio::process::Command::new(&binary)
+            .arg("--config")
+            .arg(&config)
+            .env_remove("OPENAI_API_KEY")
+            .stdin(Stdio::null())
+            .kill_on_drop(true)
+            .spawn()
+        {
+            Ok(child) => child,
+            Err(error) => {
+                tracing::warn!("could not start nebula-ui: {error}");
+                return;
             }
-            tokio::time::sleep(Duration::from_secs(5)).await;
+        };
+        match child.wait().await {
+            Ok(status) => tracing::info!("HUD closed ({status}); shutting down"),
+            Err(error) => tracing::warn!("HUD wait failed: {error}; shutting down"),
         }
+        shutdown.store(true, Ordering::Relaxed);
     });
 }

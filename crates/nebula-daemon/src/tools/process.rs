@@ -67,10 +67,10 @@ pub async fn run(
     );
     let stdout = child.stdout.take().expect("piped stdout");
     let stderr = child.stderr.take().expect("piped stderr");
-    let mut stdin = child.stdin.take();
+    let stdin = child.stdin.take();
     let result = tokio::time::timeout(timeout, async {
-        let write = async {
-            if let (Some(pipe), Some(text)) = (stdin.as_mut(), input) {
+        let write = async move {
+            if let (Some(mut pipe), Some(text)) = (stdin, input) {
                 pipe.write_all(text.as_bytes()).await?;
                 pipe.shutdown().await?;
             }
@@ -151,6 +151,21 @@ pub async fn open(target: String) -> Result<bool> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn input_is_closed_before_waiting_for_child_output() {
+        let output = run(
+            "/bin/sh",
+            &["-c".into(), "cat; printf done".into()],
+            None,
+            Some("request"),
+            Duration::from_secs(1),
+        )
+        .await
+        .unwrap();
+        assert_eq!(output.code, Some(0));
+        assert_eq!(output.text, "requestdone");
+    }
+
     #[tokio::test]
     async fn command_output_is_bounded_and_timeouts_stop_work() {
         assert!(
