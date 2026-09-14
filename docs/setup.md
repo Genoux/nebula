@@ -20,6 +20,11 @@ The installer creates `~/.local/bin/nebula`, `~/.local/bin/nebula-ui`, `~/.confi
 ./scripts/install-user-service.sh
 ```
 
+If `~/.local/bin` is missing from your `PATH`, the installer appends it to the
+profile of your login shell (`zsh`, `bash` or `fish`) once, so `nebula` resolves
+in new shells; any other shell gets a printed instruction instead. A staged
+installation never touches a profile.
+
 To reuse a build, pass `--bin-dir /absolute/path/to/release`. To inspect a staged installation without changing your login configuration, also pass `--destdir /absolute/path/to/staging-directory`.
 
 Existing configuration and credentials are preserved. For consistent service paths the supplied unit fixes `XDG_CONFIG_HOME` to `~/.config`; manual runs otherwise honor your shell's `XDG_CONFIG_HOME`.
