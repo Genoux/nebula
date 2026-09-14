@@ -27,7 +27,8 @@ pub struct Playback {
 /// Flow ships and what runs clean here. Swap for an SPSC ring (`ringbuf`) if
 /// xruns ever show up in the journal - the call sites would not change.
 pub struct Queue {
-    samples: Mutex<VecDeque<f32>>,
+    state: Mutex<Buffer>,
+    prefill_samples: usize,
     /// Read by the HUD without taking the lock.
     queued: AtomicU64,
     level: Level,
@@ -38,21 +39,36 @@ pub struct Queue {
     /// Samples the device has taken, ever. Rising is the only proof that audio
     /// has actually started playing rather than merely been queued.
     consumed: AtomicU64,
+    drains: AtomicU64,
+}
+
+struct Buffer {
+    samples: VecDeque<f32>,
+    wait_remaining: usize,
 }
 
 impl Queue {
-    fn new() -> Self {
+    fn new(prefill_samples: usize) -> Self {
         Self {
-            samples: Mutex::new(VecDeque::new()),
+            state: Mutex::new(Buffer {
+                samples: VecDeque::new(),
+                wait_remaining: prefill_samples,
+            }),
+            prefill_samples,
             queued: AtomicU64::new(0),
             level: Level::default(),
             starved: AtomicBool::new(true),
             consumed: AtomicU64::new(0),
+            drains: AtomicU64::new(0),
         }
     }
 
     pub fn push(&self, samples: &[f32]) {
-        let mut queued = self.samples.lock().expect("playback queue poisoned");
+        if samples.is_empty() {
+            return;
+        }
+        let mut state = self.state.lock().expect("playback queue poisoned");
+        let queued = &mut state.samples;
         queued.extend(samples);
         self.queued.store(queued.len() as u64, Ordering::Relaxed);
         self.starved.store(false, Ordering::Relaxed);
@@ -60,9 +76,11 @@ impl Queue {
 
     /// Drop everything not yet played. This is barge-in.
     pub fn clear(&self) -> u64 {
-        let mut queued = self.samples.lock().expect("playback queue poisoned");
+        let mut state = self.state.lock().expect("playback queue poisoned");
+        let queued = &mut state.samples;
         let discarded = queued.len() as u64;
         queued.clear();
+        state.wait_remaining = self.prefill_samples;
         self.queued.store(0, Ordering::Relaxed);
         self.starved.store(true, Ordering::Relaxed);
         discarded
@@ -72,6 +90,10 @@ impl Queue {
     /// the speakers are, which is the number barge-in latency is measured in.
     pub fn queued(&self) -> u64 {
         self.queued.load(Ordering::Relaxed)
+    }
+
+    pub fn drains(&self) -> u64 {
+        self.drains.load(Ordering::Relaxed)
     }
 
     pub fn consumed(&self) -> u64 {
@@ -88,14 +110,30 @@ impl Queue {
 
     /// Runs on the audio thread.
     fn fill(&self, out: &mut [f32]) {
-        let mut queued = self.samples.lock().expect("playback queue poisoned");
+        let mut state = self.state.lock().expect("playback queue poisoned");
+        if !state.samples.is_empty() && state.wait_remaining > 0 {
+            state.wait_remaining = state.wait_remaining.saturating_sub(out.len());
+            out.fill(0.0);
+            self.level.set(0.0);
+            return;
+        }
+        if !state.samples.is_empty() {
+            state.wait_remaining = 0;
+        }
+        let queued = &mut state.samples;
         let taken = queued.len().min(out.len());
         for slot in out.iter_mut().take(taken) {
             *slot = queued.pop_front().unwrap_or(0.0);
         }
         out[taken..].fill(0.0);
         self.queued.store(queued.len() as u64, Ordering::Relaxed);
-        drop(queued);
+        if queued.is_empty() {
+            state.wait_remaining = self.prefill_samples;
+            if taken > 0 {
+                self.drains.fetch_add(1, Ordering::Relaxed);
+            }
+        }
+        drop(state);
         self.consumed.fetch_add(taken as u64, Ordering::Relaxed);
 
         if taken < out.len() {
@@ -117,7 +155,7 @@ impl Playback {
             buffer_size: cpal::BufferSize::Fixed(buffer_frames),
         };
 
-        let queue = Arc::new(Queue::new());
+        let queue = Arc::new(Queue::new(sample_rate as usize * 80 / 1000));
         let stream = build(&cpal_device, &config, Arc::clone(&queue))?;
         stream
             .play()
@@ -196,8 +234,95 @@ mod tests {
     /// The queue is the whole barge-in mechanism, so it is tested without a
     /// device: `fill` is an ordinary function over a deque.
     #[test]
+    fn prefill_absorbs_late_chunks_without_a_gap() {
+        let q = Queue::new(8);
+        let mut out = [0.0; 2];
+        q.push(&[0.5; 4]);
+        q.fill(&mut out);
+        assert_eq!(out, [0.0; 2]);
+        assert_eq!(q.consumed(), 0);
+        assert!(!q.is_idle());
+        q.push(&[0.5; 4]);
+        for _ in 0..3 {
+            q.fill(&mut out);
+            assert_eq!(out, [0.0; 2]);
+        }
+        for _ in 0..3 {
+            q.fill(&mut out);
+            assert_eq!(out, [0.5; 2]);
+        }
+        q.push(&[0.5; 4]);
+        for _ in 0..3 {
+            q.fill(&mut out);
+            assert_eq!(out, [0.5; 2]);
+        }
+        assert_eq!(q.consumed(), 12);
+    }
+
+    #[test]
+    fn full_sized_chunks_keep_a_cushion_for_late_delivery() {
+        let q = Queue::new(8);
+        let mut out = [0.0; 2];
+        q.push(&[0.5; 10]);
+        for _ in 0..4 {
+            q.fill(&mut out);
+            assert_eq!(out, [0.0; 2]);
+            assert_eq!(q.drains(), 0);
+        }
+        for _ in 0..3 {
+            q.fill(&mut out);
+            assert_eq!(out, [0.5; 2]);
+        }
+        q.push(&[0.5; 10]);
+        for _ in 0..7 {
+            q.fill(&mut out);
+            assert_eq!(out, [0.5; 2]);
+        }
+        assert_eq!(q.drains(), 1);
+        q.fill(&mut out);
+        assert_eq!(q.drains(), 1);
+    }
+
+    #[test]
+    fn short_reply_plays_after_bounded_wait_and_rebuffers_after_starvation() {
+        let q = Queue::new(8);
+        let mut out = [0.0; 2];
+        for _ in 0..2 {
+            q.push(&[0.5]);
+            for _ in 0..4 {
+                q.fill(&mut out);
+                assert_eq!(out, [0.0; 2]);
+                assert!(!q.is_idle());
+            }
+            q.fill(&mut out);
+            assert_eq!(out, [0.5, 0.0]);
+            assert!(q.is_idle());
+        }
+        assert_eq!(q.consumed(), 2);
+    }
+
+    #[test]
+    fn clear_discards_prefill_and_resets_delay() {
+        let q = Queue::new(8);
+        let mut out = [0.0; 2];
+        q.push(&[0.7; 4]);
+        q.fill(&mut out);
+        assert_eq!(q.clear(), 4);
+        assert!(q.is_idle());
+        q.fill(&mut out);
+        assert_eq!(out, [0.0; 2]);
+        q.push(&[0.3]);
+        for _ in 0..4 {
+            q.fill(&mut out);
+            assert_eq!(out, [0.0; 2]);
+        }
+        q.fill(&mut out);
+        assert_eq!(out, [0.3, 0.0]);
+    }
+
+    #[test]
     fn fill_drains_in_order_and_pads_with_silence() {
-        let q = Queue::new();
+        let q = Queue::new(0);
         q.push(&[0.1, 0.2, 0.3]);
         let mut out = [9.0; 5];
         q.fill(&mut out);
@@ -207,7 +332,7 @@ mod tests {
 
     #[test]
     fn fill_takes_only_what_fits_and_leaves_the_rest() {
-        let q = Queue::new();
+        let q = Queue::new(0);
         q.push(&[1.0, 2.0, 3.0, 4.0]);
         let mut out = [0.0; 2];
         q.fill(&mut out);
@@ -219,7 +344,7 @@ mod tests {
 
     #[test]
     fn consumed_counts_only_what_the_device_took() {
-        let q = Queue::new();
+        let q = Queue::new(0);
         q.push(&[0.1; 10]);
         assert_eq!(q.consumed(), 0, "queued is not played");
         let mut out = [0.0; 4];
@@ -232,7 +357,7 @@ mod tests {
 
     #[test]
     fn clear_is_barge_in() {
-        let q = Queue::new();
+        let q = Queue::new(0);
         q.push(&[0.5; 48_000]);
         assert_eq!(q.queued(), 48_000);
         q.clear();
@@ -247,7 +372,7 @@ mod tests {
 
     #[test]
     fn idle_only_once_the_callback_has_run_dry() {
-        let q = Queue::new();
+        let q = Queue::new(0);
         assert!(q.is_idle());
         q.push(&[0.1; 4]);
         assert!(!q.is_idle());
@@ -261,7 +386,7 @@ mod tests {
 
     #[test]
     fn level_follows_what_was_actually_played() {
-        let q = Queue::new();
+        let q = Queue::new(0);
         q.push(&[0.25, -0.6]);
         let mut out = [0.0; 2];
         q.fill(&mut out);
