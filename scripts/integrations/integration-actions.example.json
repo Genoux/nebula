@@ -1,0 +1,63 @@
+{
+  "cabine": {
+    "base_url": "http://127.0.0.1:3000",
+    "credential_container": "cabine_api",
+    "actions": {
+      "status": {
+        "method": "GET",
+        "path": "/status",
+        "description": "Read PC availability and light API configuration; does not report light power state."
+      },
+      "arrive": {
+        "method": "POST",
+        "path": "/api/arrive",
+        "description": "Wake the office PC and turn all lights on."
+      },
+      "leave": {
+        "method": "POST",
+        "path": "/api/leave",
+        "description": "Put the office PC to sleep and turn all lights off."
+      },
+      "wake-pc": {
+        "method": "POST",
+        "path": "/api/wake-pc",
+        "description": "Wake the office PC."
+      },
+      "sleep-pc": {
+        "method": "POST",
+        "path": "/api/sleep-pc",
+        "description": "Put the office PC to sleep."
+      },
+      "lights-on": {
+        "method": "POST",
+        "path": "/api/lights-on",
+        "description": "Turn all office lights on."
+      },
+      "lights-off": {
+        "method": "POST",
+        "path": "/api/lights-off",
+        "description": "Turn all office lights off."
+      }
+    }
+  },
+  "live-camera": {
+    "base_url": "http://127.0.0.1:3010",
+    "actions": {
+      "status": {
+        "method": "GET",
+        "path": "/status",
+        "description": "Read camera streaming status."
+      },
+      "start": {
+        "method": "POST",
+        "path": "/start",
+        "description": "Start the live camera stream."
+      },
+      "stop": {
+        "method": "POST",
+        "path": "/stop",
+        "description": "Stop the live camera stream."
+      }
+    }
+  }
+}
