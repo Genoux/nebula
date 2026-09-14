@@ -10,8 +10,7 @@ Type=simple
 ExecStart=%h/.local/bin/nebula
 EnvironmentFile=-%h/.config/nebula/nebula.env
 Environment=XDG_CONFIG_HOME=%h/.config
-Restart=on-failure
-RestartSec=10
+Restart=no
 RestartPreventExitStatus=78
 TimeoutStopSec=20
 UMask=0077

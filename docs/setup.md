@@ -121,6 +121,10 @@ program = "/home/john/.local/bin/project-status"
 args = []
 ```
 
+For the Cabine office API and live-camera stream controls, see
+[server API integrations](../scripts/integrations/README.md). Their action catalog
+can be extended on the server without rebuilding Nebula.
+
 Browser tools open HTTP(S) URLs and fetch page text without browser cookies or
 JavaScript. They do not control logged-in tabs. Desktop tools list/focus windows
 and open files; they do not provide mouse or keyboard automation.
@@ -136,7 +140,7 @@ network access. The second is a paid API diagnostic: it executes only
 the model, and verifies result submission and spoken-response generation using
 synthetic silence. It does not capture microphone audio or execute system actions.
 
-## Test audio and train the wake phrase
+## Test audio and optional wake diagnostics
 
 ```sh
 ~/.local/bin/nebula --test-audio --no-loopback
@@ -149,7 +153,7 @@ Training asks for five takes of the configured phrase, each 0.25–1.6 seconds. 
 
 To test “Hey Nebula,” set `wake_word.phrase = "hey nebula"`, then train and test again. Each phrase has a separate model. Higher sensitivity values make matching stricter; reduce the value for missed wakes, increase it for false wakes. Repeated false wakes require retraining or replacing the detector, not just accepting a higher score.
 
-`--check` checks local configuration, device availability, wake-model structure, and credential permissions. It does not contact OpenAI or prove credential validity, model access, audible output, or detection accuracy.
+`--check` checks local configuration, device availability and credential permissions. It does not contact OpenAI or prove credential validity, model access, audible output, or detection accuracy.
 
 ## Converse
 
@@ -165,49 +169,103 @@ For the complete flow, run Nebula from a terminal in your graphical session:
 ~/.local/bin/nebula
 ```
 
-The daemon starts `nebula-ui` automatically when `ui.enabled = true` and restarts it if it crashes. A separately started HUD is reused. The ready indicator fades after eight seconds; it reappears during conversation. `--manual-live` remains an audio-only diagnostic.
+The daemon starts `nebula-ui` automatically when `ui.enabled = true` and exits if that HUD closes. Launch both together with this command. The call starts immediately, without wake-word detection. `--manual-live` remains an audio-only diagnostic.
 
-Say the trained phrase and wait for the Listening indicator. The wake tone confirms detection; Connecting means the cloud session is not yet ready. Live microphone capture starts after the server sends `session.started`. Audio spoken during Connecting is not buffered.
+Wait for the Listening indicator. Once connected,
+Nebula gives a brief “Hey, I’m listening” greeting, then waits for your request. The startup tone confirms launch; Connecting means the cloud session is not yet ready. Live microphone capture starts after the server sends `session.started`. Audio spoken during Connecting is not buffered.
 
 - Left-click the pill to mute/unmute the microphone.
 - Right-click to end the live session, including while connecting.
 - `nebula-ui --toggle-mute` and `nebula-ui --end-session` provide keyboard-bindable equivalents.
 - The assistant can call `end_conversation` when you naturally say goodbye or ask
-  to finish talking. This works even with local tools disabled and returns to
-  wake-word standby. Closing allows a brief farewell, with a 15-second maximum
-  wait; it does not quit the daemon.
-- Say “Nebula, stop” or wait for `session.idle_timeout_seconds` of inactivity to return to local standby.
-- Ctrl-C and SIGTERM shut down the daemon.
+  to finish talking. This works even with local tools disabled and exits Nebula
+  after cleanup. Closing allows a brief farewell, with a 15-second maximum wait.
+- Say “Nebula, stop” or wait for `session.idle_timeout_seconds` of inactivity to end the call and exit.
+- Ctrl-C and SIGTERM shut down the daemon and its GUI. Run the command again for a new call.
 
 Speech stopping is recognized through native GPT-Live transcript fragments during a live session. It is not a local emergency stop and can be delayed by transcription. Use the HUD or Ctrl-C for immediate local control.
 
-## Start at login, after approval
+## Command-only startup
 
-The installer does not enable anything. Only run this when you want background listening at login:
-
-```sh
-systemctl --user enable --now nebula.service
-systemctl --user status nebula.service
-journalctl --user -u nebula.service -f
-```
-
-Disable and stop:
+Keep the user service disabled so calls start only from your terminal:
 
 ```sh
 systemctl --user disable --now nebula.service
+~/.local/bin/nebula
 ```
 
-The HUD needs the graphical session's Wayland environment. On the inspected machine the systemd user manager did not have `WAYLAND_DISPLAY`, so start the HUD from Hyprland, not the daemon service. Add this line to your Hyprland configuration only when you choose to enable it:
+No wake model is needed for normal startup. Wake training and testing remain
+optional diagnostics. A system tray launcher is not implemented yet.
 
-```ini
-exec-once = ~/.local/bin/nebula-ui
-```
+## Tool response latency
 
-Optional bindings:
+Nebula supplies configured folders, server names, integration descriptions, and
+approval policy to both models when a conversation starts. Known actions can run
+directly; `tools_list` and integration action discovery remain available for
+missing or outdated context. Include known action names and input formats in
+integration descriptions. Refresh those descriptions when server actions change;
+unknown actions still use discovery. These descriptions describe capabilities,
+not live device state.
 
-```ini
-bind = SUPER SHIFT, M, exec, ~/.local/bin/nebula-ui --toggle-mute
-bind = SUPER SHIFT, N, exec, ~/.local/bin/nebula-ui --end-session
-```
+Set `backend_reasoning_effort = "low"` in `[session]` to reduce backend reasoning
+for routine tool requests. Omit it to use the model default. Supported effort
+levels depend on the configured backend; validate with `nebula --check-tools-live`
+after changing it. Lower effort may reduce quality on complex tasks.
+Local tool completion logs include `elapsed_ms` to separate execution time from
+model waiting time.
 
-The HUD defaults to bottom-center. Use `ui.position = "top-center"` if it overlaps another overlay. `ui.enabled = false` disables the HUD. On X11 or a compositor without layer-shell, it falls back to desktop notifications using `notify-send`; CLI controls still work.
+## Compact persistent memory
+
+When local tools are enabled, `memory_read`, `memory_write`, and `memory_forget`
+manage `~/.config/nebula/memory.json` (or the configured XDG config directory).
+Notes load into both voice and backend context for each new conversation, and
+are shared with OpenAI as part of that context. Audio and transcript storage
+remain disabled. Disabling local tools also disables memory loading and tools.
+
+Nebula is instructed to proactively remember durable user preferences and system
+facts verified during successful work, update corrections, and avoid redundant
+writes. Notes are reference data; they do not authorize actions or establish
+current device state. No full transcripts, task logs, or credentials belong here.
+The credential filter is heuristic, not a guarantee of detecting every secret.
+
+Memory is capped at 24 named notes and 8192 serialized UTF-8 bytes total. Each
+value is limited to 320 bytes and its source to 120 bytes. Stable topic keys let
+Nebula update a fact rather than append another copy. A full store rejects new
+notes until entries are shortened, consolidated, or explicitly forgotten; it
+never silently evicts notes. Edits require the current value to prevent stale
+updates. Files are replaced atomically with mode 0600, and mutations follow the
+configured tool approval policy. Invalid files are preserved; conversation
+startup continues without them and reports a warning in the journal.
+
+Try “Remember that I prefer short answers,” “What do you remember about my
+wallpaper?”, or “Forget my wallpaper setup.” These notes are local to each machine.
+
+## Quit the call and dismiss the island
+
+The `close_call` tool handles “quit the call,” “hang up now,” and “close the island.”
+It ends the voice session without waiting for a farewell or queued local work.
+The island fades away and Nebula exits after connection cleanup. Run the command
+again to start another call. Already started remote actions may continue. `end_conversation` remains available for a
+normal goodbye with a brief farewell. Both tools work with local tools disabled.
+
+
+## Window and workspace control
+
+Inside a Hyprland 0.55+ session with Lua dispatch, Nebula can list and focus windows, switch workspaces,
+and move a chosen window between workspaces. These tools use the configured
+approval policy; `approval = "never"` runs them without a dialog.
+
+- “Focus Firefox.” resolves the app from `desktop_windows`, then uses `desktop_focus`.
+- “Go to workspace 3.” uses `desktop_workspace` directly.
+- “Next workspace.” uses `+1`; “go back to the last workspace” uses `previous`.
+- “Move this window to workspace 4 and stay here.” uses `desktop_move` with
+  `follow = false`; “and follow it” sets `follow = true`.
+- “Which workspace am I on?” uses `desktop_workspaces`, which includes each
+  monitor's active workspace.
+
+Window listings include the active address, workspace, monitor, position, and
+size. Actions require an exact window address from that listing. Workspace
+targets accept positive numbers, `name:NAME`, `+1`, `-1`, or `previous`;
+special workspaces are not supported by these tools. Hyprland must be running,
+and Nebula must inherit its desktop environment. Window management leaves the
+voice call running.

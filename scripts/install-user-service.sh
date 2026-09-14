@@ -44,4 +44,4 @@ if [[ -z "$staging_dir" ]]; then
     systemctl --user daemon-reload
 fi
 printf '%s\n' 'installed; service remains disabled unless you previously enabled it'
-printf '%s\n' 'next: configure the key, train the wake phrase, and run nebula --check'
+printf '%s\n' 'next: configure the key, run nebula --check, then launch nebula'

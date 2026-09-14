@@ -34,3 +34,13 @@ Stop Nebula before removing devices it is using.
 
 See the [PipeWire echo-cancel module options](https://docs.pipewire.org/page_pulse_module_echo_cancel.html)
 and [module loading documentation](https://docs.pipewire.org/page_pulse_modules.html).
+
+Nebula waits 80 ms before playing incoming audio after an empty queue, including
+when the first chunk already contains more than 80 ms of audio. A short final chunk plays
+after the bounded wait even if no more audio arrives. Clearing playback discards
+the cushion immediately. This absorbs modest network jitter; it does not repair
+Bluetooth dropouts or PipeWire scheduling errors.
+
+Playback logs report how often the queue empties. Counts include normal speech
+endings; correlate bursts during continuous speech with audible glitches before
+attributing them to network delivery.
